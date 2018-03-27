@@ -1,0 +1,7 @@
+https://en.wikipedia.org/wiki/OBD-II_PIDs
+
+Mode 01
+PID  0x05 or 0x67, Engine Coolant Temperature, Returns 1 byte, min -40C -- +215C, (actual temp in C is value - 40)
+PID  0x0f or 0x68, Intake Air Temperature, Returns 1 byte, min -40C -- +215C, (actual temp in C is value - 40)
+PID  0x46, Ambient Air Temperature, Returns 1 byte, min -40C -- +215C, (actual temp in C is value - 40)
+PID  0x5c, Engine Oil Temperature, Returns 1 byte, min -40C -- +215C, (actual temp in C is value - 40)
