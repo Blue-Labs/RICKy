@@ -1,4 +1,4 @@
-MCU = at90can32
+MCU = at90can128
 F_CPU = 16000000UL   	# 8 MHz
 AVRDUDE_PROGRAMMER = usbtiny
 AVRDUDE_PORT = usb

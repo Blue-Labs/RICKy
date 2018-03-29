@@ -166,18 +166,18 @@ dev_t * motors;
 dev_t * lights;
 
 struct {
-    int changed:1;
-    int door_left:1;
-    int door_right:1;
-    int courtesy_switch_left:1;
-    int courtesy_switch_right:1;
-    int ac_clutch:1;
-    int locks_arm:1;
-    int locks_disarm:1;
-    int dome_light:1;
-    int ect:9;
-    int ignition_on:1;
-    int ignition_run:1;
+    bool changed:1;
+    bool door_left:1;
+    bool door_right:1;
+    bool courtesy_switch_left:1;
+    bool courtesy_switch_right:1;
+    bool ac_clutch:1;
+    bool locks_arm:1;
+    bool locks_disarm:1;
+    bool dome_light:1;
+    int16_t ect:16;
+    bool ignition_on:1;
+    bool ignition_run:1;
 } inputs;
 
 uint16_t timer0_ovf=0;
@@ -195,7 +195,7 @@ void chip_init(void){
     DDRF   = 0x00;              // 0x00 is default, use PF0/ADC0 input
     DDRG   = 0x00;              // inputs
 
-    PORTB  = 0b00001111;        // make sure input resistor isn't up for B7:4, these are HIGH inputs
+    PORTB  = 0b00001110;        // make sure input pull-up resistor isn't up for B7:4 and :1, these are HIGH inputs
     PORTE  = 0b11110111;        // turn on the pull-up resistors for PORTE
     PORTF  = 0b11111110;
     PORTG  = 0b00011111;
@@ -213,8 +213,8 @@ void chip_init(void){
      *
      * PE0 - door lock ARM
      * PE1 - door lock DISARM
-     * PE2 - ac_clutch
-     * PE3 - overhead dome light input      + input
+     * PB1 - ac_clutch                               || can't use PE2 due to ISP circuit
+     * PB0 - overhead dome light input      + input  || can't use PE3 due to ISP circuit
      * PE4 - driver courtesy switch
      * PE5 - passenger courtesy switch
      * PE6(INT6) - driver door ajar
@@ -350,7 +350,9 @@ ISR(TIMER1_OVF_vect) {              // 1 second timer
 
 void periodic(void) {
     uint8_t z, _adcl;
-    uint16_t or_ect, cr_ect;
+    int16_t or_ect, cr_ect;
+    static int16_t ect_p=0, ect_a[30]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    int16_t ect_f;
 
     inputs.changed=False;
 
@@ -372,7 +374,7 @@ void periodic(void) {
         inputs.changed=True;
     }
 
-    z = ((PINE & _BV(PE3)) == _BV(PE3));
+    z = ((PINB & _BV(PB0)) == _BV(PB0));
     if (inputs.dome_light != z) {
         lights[0].flags.running =1;
         if (z)
@@ -456,50 +458,59 @@ void periodic(void) {
 
     _adcl  = ADCL & 0xf0;                // Take reading
     or_ect = (ADCH <<2) + (_adcl>>6);;   // Take reading
-    cr_ect = (1024-or_ect+35)/3.125;
+    cr_ect = (1024-or_ect)*.672-430;     // adjust (1024-or_ect+35)/3.125
+    //cr_ect = (1024-or_ect+35)/3.125;
 
-    inputs.ect=cr_ect;
-
-    if (cr_ect != or_ect) {
+    if (cr_ect != inputs.ect) {
+        //printf("cr: %d\n", cr_ect);
         if (cr_ect >=90) {              // 90+
             fans[0].current_level=100;
             fans[1].current_level=100;
             fans[2].current_level=100;
-            if (!(or_ect >= 90) ) {
+            if (!(inputs.ect >= 90) ) {
                 inputs.changed = True;
             }
         } else if (cr_ect >=80) {        // 80-89
             fans[0].current_level=50;
             fans[1].current_level=70;
             fans[2].current_level=70;
-            if ((or_ect <80) || (or_ect >89) ) {
+            if ((inputs.ect <80) || (inputs.ect >89) ) {
                 inputs.changed = True;
             }
         } else if (cr_ect >=70) {        // 70-79
             fans[0].current_level=0;
             fans[1].current_level=50;
             fans[2].current_level=50;
-            if ((or_ect <70) || (or_ect >79) ) {
+            if ((inputs.ect <70) || (inputs.ect >79) ) {
                 inputs.changed = True;
             }
         } else if (cr_ect >=50) {        // 50-69
             fans[0].current_level=0;
             fans[1].current_level=25;
             fans[2].current_level=25;
-            if ((or_ect <50) || (or_ect >69) ) {
+            if ((inputs.ect <50) || (inputs.ect >69) ) {
                 inputs.changed = True;
             }
         } else {                        // up to 49
             fans[0].current_level=0;
             fans[1].current_level=0;
             fans[2].current_level=0;
-            if (or_ect >49) {
+            if (inputs.ect >49) {
                 inputs.changed = True;
             }
         }
-
-        or_ect = cr_ect;
     }
+    
+    // running average
+    ect_a[ect_p] = cr_ect;
+    ect_p = (ect_p+1) % 30;
+    ect_f=0;
+    for (int n=0; n<30; n++) {
+        ect_f += ect_a[n];
+    }
+    ect_f /= 30;
+    
+    inputs.ect = ect_f;
 
     if (inputs.ac_clutch) {
         fans[0].current_level=100;
@@ -649,18 +660,23 @@ ISR(INT7_vect) {
 }
 
 int main(void) {
+    int16_t ect_p=-99;
+
     cli();
     usart_init();
+    
     chip_init();
     //internal_pwm_init();
     i2c_init();
     device_structure_init();
     sei();
+    
+    //printf("Boot done\n");
 
     //TMP006_init();
     //DS1307_init();
     //DS1307_printsec();
-
+    
     PCA9685_init();
     PCA9685_set_ch_percent(0, 0);
     PCA9685_set_ch_percent(1, 0);
@@ -668,7 +684,7 @@ int main(void) {
     for (int zz=0; zz<16; zz++) {
         PCA9685_set_ch_percent(zz, 0);
     }
-
+    
     Adafruit_ssd1306syp_initialize();
     Adafruit_ssd1306syp_clear(1);
     Adafruit_GFX_setTextSize(1);
@@ -691,20 +707,27 @@ int main(void) {
     //Adafruit_GFX_stopscroll();
     _delay_ms(1000);
     #endif
-
+    
     uint8_t ch;
     char s[24];
+    inputs.changed=1;
     for(;;) {
+        if (inputs.ect != ect_p) {
+            Adafruit_GFX_setCursor(0,0);
+            sprintf(s, "ECT%3i", inputs.ect);
+            Adafruit_GFX_println(s);
+            ect_p = inputs.ect;
+        }
+    
         if (inputs.changed) {
-            sprintf(s, "ECT%3i D%s%s C%s  %s  %s",
-                inputs.ect,
+            sprintf(s, "D%s%s C%s  %s  %s",
                 inputs.door_left?"L":"l",
                 inputs.door_right?"R":"r",
                 inputs.courtesy_switch_left ? "L":"l",
                 inputs.courtesy_switch_right ? "R":"r",
                 inputs.dome_light?"DO":"do"
                 );
-            Adafruit_GFX_setCursor(0,0);
+            Adafruit_GFX_setCursor(56,0);
             Adafruit_GFX_println(s);
 
             sprintf(s, "       L%s%s I%s%s %s",
@@ -736,11 +759,15 @@ int main(void) {
             Adafruit_GFX_setCursor(56,32);
             Adafruit_GFX_println(s);
 
+        }
+
+        if (inputs.ect != ect_p) {
             cli();
             Adafruit_ssd1306syp_update();
             sei();
+            ect_p = inputs.ect;
         }
-        _delay_ms(50);
+        _delay_ms(10);
     }
 
 }
