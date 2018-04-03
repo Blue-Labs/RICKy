@@ -220,8 +220,8 @@ void chip_init(void){
      * PE6(INT6) - driver door ajar
      * PE7(INT7) - passenger door ajar
      *
-     * PG3 - ignition ON                    + input
-     * PG4 - ignition RUN                   + input
+     * PG3 - ignition RUN                   + input
+     * PG4 - ignition START                 + input
      *
      */
 
@@ -461,7 +461,8 @@ void periodic(void) {
     cr_ect = (1024-or_ect)*.672-430;     // adjust (1024-or_ect+35)/3.125
     //cr_ect = (1024-or_ect+35)/3.125;
 
-    if (cr_ect != inputs.ect) {
+    // hysterisis model so a +/- 1 doesn't bounce around
+    if (cr_ect < inputs.ect-1 || cr_ect > inputs.ect+1) {
         //printf("cr: %d\n", cr_ect);
         if (cr_ect >=90) {              // 90+
             fans[0].current_level=100;
@@ -713,10 +714,10 @@ int main(void) {
     inputs.changed=1;
     for(;;) {
         if (inputs.ect != ect_p) {
+            printf("inputs.ect= %i\n", inputs.ect);
             Adafruit_GFX_setCursor(0,0);
             sprintf(s, "ECT%3i", inputs.ect);
             Adafruit_GFX_println(s);
-            ect_p = inputs.ect;
         }
     
         if (inputs.changed) {
@@ -761,7 +762,7 @@ int main(void) {
 
         }
 
-        if (inputs.ect != ect_p) {
+        if (inputs.ect != ect_p || inputs.changed) {
             cli();
             Adafruit_ssd1306syp_update();
             sei();
